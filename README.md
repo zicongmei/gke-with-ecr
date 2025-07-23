@@ -6,7 +6,7 @@ and containerd to pull image from AWS ECR.
 
 ## Quick Start
 
-1.  **Prerequisites:** Ensure `gcloud CLI`, `kubectl`, `aws CLI`, and `gsutil` are installed and configured with appropriate permissions for your GCP project and AWS account. You need a GKE cluster with Workload Identity enabled.
+1.  **Prerequisites:** Ensure `gcloud CLI`, `kubectl`, `aws CLI`, and `gsutil` are installed and configured with appropriate permissions for your GCP project and AWS account. You need a GKE cluster.
 
 2.  **Setup AWS Role:** Create an AWS IAM role that your GKE nodes can assume.
     ```bash
