@@ -21,6 +21,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"regexp"
@@ -61,9 +63,10 @@ type STS interface {
 }
 
 type ecrPlugin struct {
-	ecr       ECR
-	ecrPublic ECRPublic
-	sts       STS
+	ecr        ECR
+	ecrPublic  ECRPublic
+	sts        STS
+	awsRoleARN string // Added field for the AWS IAM Role ARN provided as a command-line argument
 }
 
 func defaultECRProvider(ctx context.Context, region string) (ECR, error) {
@@ -179,44 +182,88 @@ func (e *ecrPlugin) getPrivateCredsData(ctx context.Context, imageHost string, i
 	}, nil
 }
 
-func (e *ecrPlugin) buildCredentialsProvider(ctx context.Context, request *v1.CredentialProviderRequest, imageHost string) (aws.CredentialsProvider, error) {
+// getGCPIdentityToken fetches a GCP Service Account identity token from the GCP metadata server.
+func getGCPIdentityToken(ctx context.Context, audience string) (string, error) {
+	metadataURL := fmt.Sprintf("http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience=%s&format=full", url.QueryEscape(audience))
+	klog.Infof("Attempting to fetch GCP identity token from metadata server for audience: %s", audience)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", metadataURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request to GCP metadata server: %w", err)
+	}
+	req.Header.Set("Metadata-Flavor", "Google")
+
+	client := &http.Client{Timeout: 5 * time.Second} // Add a timeout to prevent hanging
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to make request to GCP metadata server: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("received non-200 status code from GCP metadata server: %d, body: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	tokenBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response body from GCP metadata server: %w", err)
+	}
+
+	klog.Info("Successfully fetched GCP identity token from metadata server.")
+	return string(tokenBytes), nil
+}
+
+// buildCredentialsProvider constructs an AWS credentials provider that assumes an IAM role
+// using a GCP Service Account identity token obtained from the GKE metadata server.
+func (e *ecrPlugin) buildCredentialsProvider(ctx context.Context, imageHost string) (aws.CredentialsProvider, error) {
 	var err error
 
-	arn, ok := request.ServiceAccountAnnotations["eks.amazonaws.com/ecr-role-arn"]
-	if !ok {
-		arn = os.Getenv("AWS_ECR_ROLE_ARN")
-	}
+	// The AWS IAM Role ARN is now provided directly as a command-line argument to the plugin.
+	arn := e.awsRoleARN
 	if arn == "" {
-		return nil, errors.New("no arn provided, cannot assume role using ServiceAccountToken")
+		// This case should ideally be caught by the command-line flag parser (cobra),
+		// but this serves as a safeguard.
+		return nil, errors.New("AWS IAM role ARN is required for federated authentication and was not provided.")
 	}
 
 	if e.sts == nil {
-		region := ""
+		region := "" // STS client can be initialized without a specific region, SDK will use default or env
 		if imageHost != ecrPublicHost {
 			region = parseRegionFromECRPrivateHost(imageHost)
 		}
 		e.sts, err = stsProvider(ctx, region)
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create STS client: %w", err)
 	}
 
 	return aws.CredentialsProviderFunc(func(ctx context.Context) (aws.Credentials, error) {
-			assumeOutput, err := e.sts.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityInput{
-				RoleArn:          aws.String(arn),
-				RoleSessionName:  aws.String("ecr-credential-provider"),
-				WebIdentityToken: aws.String(request.ServiceAccountToken),
-			})
-			if err != nil {
-				return aws.Credentials{}, fmt.Errorf("failed to assume role: %w", err)
-			}
-			return aws.Credentials{
-				AccessKeyID:     *assumeOutput.Credentials.AccessKeyId,
-				SecretAccessKey: *assumeOutput.Credentials.SecretAccessKey,
-				SessionToken:    *assumeOutput.Credentials.SessionToken,
-			}, nil
-		}),
-		nil
+		// Fetch the GCP Service Account identity token from the GKE metadata server.
+		// The audience for this token is "sts.amazonaws.com" for OIDC federation.
+		gcpIdentityToken, err := getGCPIdentityToken(ctx, "sts.amazonaws.com")
+		if err != nil {
+			return aws.Credentials{}, fmt.Errorf("failed to get GCP identity token from metadata server: %w", err)
+		}
+
+		// Use the fetched GCP identity token to assume the specified AWS IAM role.
+		assumeOutput, err := e.sts.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityInput{
+			RoleArn:          aws.String(arn),
+			RoleSessionName:  aws.String("gke-ecr-credential-provider"), // A descriptive session name
+			WebIdentityToken: aws.String(gcpIdentityToken),              // The GCP identity token
+			DurationSeconds:  aws.Int32(900),                            // Default to 15 minutes session duration
+		})
+		if err != nil {
+			return aws.Credentials{}, fmt.Errorf("failed to assume AWS IAM role '%s' with GCP identity token: %w", arn, err)
+		}
+
+		klog.Infof("Successfully assumed AWS IAM role %s.", arn)
+		return aws.Credentials{
+			AccessKeyID:     *assumeOutput.Credentials.AccessKeyId,
+			SecretAccessKey: *assumeOutput.Credentials.SecretAccessKey,
+			SessionToken:    *assumeOutput.Credentials.SessionToken,
+		}, nil
+	}), nil
 }
 
 func (e *ecrPlugin) GetCredentials(ctx context.Context, request *v1.CredentialProviderRequest, args []string) (*v1.CredentialProviderResponse, error) {
@@ -233,11 +280,25 @@ func (e *ecrPlugin) GetCredentials(ctx context.Context, request *v1.CredentialPr
 	}
 
 	var credentialsProvider aws.CredentialsProvider = nil
-	if request.ServiceAccountToken != "" {
-		credentialsProvider, err = e.buildCredentialsProvider(ctx, request, imageHost)
+
+	// The AWS IAM Role ARN is now taken directly from the ecrPlugin's awsRoleARN field,
+	// which is populated from a command-line argument.
+	roleARNToUse := e.awsRoleARN
+
+	if roleARNToUse != "" {
+		klog.Infof("AWS IAM role ARN '%s' provided via command-line argument. Attempting to build AWS credentials provider using GCP metadata server for federated authentication.", roleARNToUse)
+		credentialsProvider, err = e.buildCredentialsProvider(ctx, imageHost)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to build AWS credentials provider for ECR using GCP token: %w", err)
 		}
+	} else {
+		// If no AWS IAM Role ARN is provided via command-line argument,
+		// the AWS SDK's default credential chain will be used. This includes
+		// environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN),
+		// shared credential files (~/.aws/credentials), and EC2 instance profiles (if on EC2).
+		klog.Info("No AWS IAM role ARN provided via command-line argument. AWS SDK will use its default credential resolution chain (e.g., EC2 instance profile, env vars, shared config).")
+		// `credentialsProvider` remains nil here, so the ECR/ECRPublic clients will be
+		// initialized with `config.LoadDefaultConfig` which implies default AWS SDK credential lookup.
 	}
 
 	if imageHost == ecrPublicHost {
@@ -301,9 +362,13 @@ func getCacheDuration(expiresAt *time.Time) *metav1.Duration {
 	} else {
 		// halving duration in order to compensate for the time loss between
 		// the token creation and passing it all the way to kubelet.
-		duration := time.Second * time.Duration((expiresAt.Unix()-time.Now().Unix())/2)
+		duration := time.Second * time.Duration((expiresAt.Unix()-time.Now().Unix()) / 2)
 		if duration > 0 {
 			cacheDuration = &metav1.Duration{Duration: duration}
+		} else {
+			// If duration is 0 or negative (token already expired or very short life),
+			// set cache duration to 0 to force immediate re-fetch.
+			cacheDuration = &metav1.Duration{Duration: 0}
 		}
 	}
 	return cacheDuration
@@ -334,7 +399,9 @@ func main() {
 	logs.InitLogs()
 	defer logs.FlushLogs()
 
-	if err := newCredentialProviderCommand().Execute(); err != nil {
+	// Use cobra command to parse arguments and run the plugin
+	rootCmd := newCredentialProviderCommand()
+	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
 }
@@ -342,17 +409,26 @@ func main() {
 var gitVersion string
 
 func newCredentialProviderCommand() *cobra.Command {
+	var awsRoleARN string // Variable to store the AWS Role ARN from the command-line flag
+
 	cmd := &cobra.Command{
 		Use:     "ecr-credential-provider",
 		Short:   "ECR credential provider for kubelet",
 		Version: gitVersion,
 		Run: func(cmd *cobra.Command, args []string) {
-			p := NewCredentialProvider(&ecrPlugin{})
+			// Initialize the plugin with the AWS Role ARN obtained from the command-line flag
+			p := NewCredentialProvider(&ecrPlugin{awsRoleARN: awsRoleARN})
 			if err := p.Run(context.TODO()); err != nil {
 				klog.Errorf("Error running credential provider plugin: %v", err)
 				os.Exit(1)
 			}
 		},
 	}
+
+	// Add a persistent flag to accept the AWS IAM Role ARN
+	cmd.Flags().StringVar(&awsRoleARN, "aws-role-arn", "", "AWS IAM Role ARN to assume for ECR access when using GCP federated authentication. This flag is required.")
+	// Mark the flag as required
+	cmd.MarkPersistentFlagRequired("aws-role-arn")
+
 	return cmd
 }
