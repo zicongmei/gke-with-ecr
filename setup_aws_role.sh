@@ -3,10 +3,13 @@
 # Exit immediately if a command exits with a non-zero status.
 set -euo pipefail
 
-AWS_ROLE_NAME_PREFIX="gke-role" # Use a prefix as the name might not be fixed but derived from ARN
+AWS_ROLE_NAME="gke-role-1" # can change to any role name
 
 GCP_PROJECT_ID=$(gcloud config get-value project)
 GCP_PROJECT_NUMBER=$(gcloud projects describe ${GCP_PROJECT_ID} --format="value(projectNumber)")
+
+# This is the default service account for GKE node. If user configured other service account to the 
+# GKE nodepool, replace it with the actual service account
 GCP_SERVICE_ACCOUNT_EMAIL="${GCP_PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
 GCP_SA_SUB=$(gcloud iam service-accounts describe ${GCP_SERVICE_ACCOUNT_EMAIL} --format=json | jq -r .uniqueId)
 
@@ -25,9 +28,6 @@ if [ -z "$AWS_ACCOUNT_ID" ]; then
 fi
 echo "Retrieved AWS Account ID: ${AWS_ACCOUNT_ID}"
 
-# Derive a unique role name based on project ID and a timestamp or fixed suffix
-# Using a fixed name for simplicity as per original, but good to be aware.
-AWS_ROLE_NAME="${AWS_ROLE_NAME_PREFIX}-1" # Keeping original role name for consistency with existing script logic
 
 # 1. Create the AWS IAM Role
 echo "Checking if AWS IAM Role '${AWS_ROLE_NAME}' already exists..."

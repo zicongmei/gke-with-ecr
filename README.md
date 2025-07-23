@@ -49,3 +49,7 @@ This solution automates the setup for GKE to pull images from AWS ECR:
 *   **AWS IAM Role Creation:** A dedicated AWS IAM role (`gke-role-1`) is created, configured to be assumable by your GKE cluster's default compute service account via OIDC federation. This role is granted `AmazonEC2ContainerRegistryReadOnly` permissions.
 *   **Plugin Build & Distribution:** A Go-based Kubelet credential provider plugin is built for Linux AMD64 and uploaded to a specified GCS bucket. This plugin retrieves temporary AWS credentials by assuming the configured IAM role using a GCP identity token.
 *   **DaemonSet Deployment & Kubelet Setup:** A Kubernetes DaemonSet is deployed. Each pod runs an `initContainer` with elevated privileges. This `initContainer` downloads the plugin binary to the node's `/home/kubernetes/bin` directory, updates the Kubelet's credential provider configuration (`/etc/srv/kubernetes/cri_auth_config.yaml`) to use the plugin for ECR image pulls, and restarts the `kubelet` service.
+
+## Clean up GKE ECR Integration:
+1. Remove DaemonSet: `make undeploy`
+2. Delete AWS IAM role: `./clean_up_aws_role.sh`
