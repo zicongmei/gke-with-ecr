@@ -114,4 +114,3 @@ mkdir -p "${STATUS_DIR}"
 echo "Writing AWS role ARN to ${STATUS_FILE}..."
 echo "AWS_ROLE_ARN=${AWS_ROLE_ARN}" > "${STATUS_FILE}"
 echo "Information saved to ${STATUS_FILE}."
-

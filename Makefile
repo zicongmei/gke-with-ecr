@@ -43,7 +43,7 @@ publish: build $(STATUS_DIR)
 
 # make deploy: deploys the GKE ECR image puller using information from .status dir
 .PHONY: deploy
-deploy: $(STATUS_DIR) publish
+deploy: $(STATUS_DIR)
 	@echo "Running deploy.sh using information from $(STATUS_DIR)..."
 	./deploy.sh
 
