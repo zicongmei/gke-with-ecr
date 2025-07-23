@@ -34,3 +34,5 @@ go.work.sum
 hack/
 vendor/
 gke-with-ecr
+bin/
+.status/
