@@ -1,6 +1,8 @@
 # gke-with-ecr
 
-This project enables GKE nodes to pull container images from AWS ECR private and public registries by configuring Kubelet with a custom credential provider plugin. It leverages OIDC federation for secure authentication from GCP to AWS.
+This project enables GKE nodes to pull container images from AWS ECR private and public registries by configuring Kubelet with a custom credential provider plugin. It leverages OIDC federation for secure authentication from GCP to AWS. The plugin reads the default 
+service account (SA) token of the GCP VM instance, exchange this GCP SA token to a AWS role token, and then allow the kubelet 
+and containerd to pull image from AWS ECR.
 
 ## Quick Start
 
