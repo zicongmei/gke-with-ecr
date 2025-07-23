@@ -8,18 +8,14 @@ AWS_ROLE_NAME_PREFIX="gke-role" # Use a prefix as the name might not be fixed bu
 GCP_PROJECT_ID=$(gcloud config get-value project)
 GCP_PROJECT_NUMBER=$(gcloud projects describe ${GCP_PROJECT_ID} --format="value(projectNumber)")
 GCP_SERVICE_ACCOUNT_EMAIL="${GCP_PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
-
-OIDC_PROVIDER_URL="https://accounts.google.com" # Changed to accounts.google.com
-OIDC_CLIENT_ID="sts.amazonaws.com"
-GOOGLE_ROOT_CA_THUMBPRINT="08e4f16a75f048d0a0d3f7f14b64f20f01968848" # Updated for accounts.google.com
+GCP_SA_SUB=$(gcloud iam service-accounts describe ${GCP_SERVICE_ACCOUNT_EMAIL} --format=json | jq -r .uniqueId)
 
 # Define the status directory and file
 STATUS_DIR=".status"
 STATUS_FILE="${STATUS_DIR}/aws_role_info.txt"
 
-echo "Starting AWS IAM Role and OIDC Provider configuration for GCP Service Account..."
+echo "Starting AWS IAM Role configuration for GCP Service Account..."
 echo "GCP Service Account Email: ${GCP_SERVICE_ACCOUNT_EMAIL}"
-echo "OIDC Provider URL: ${OIDC_PROVIDER_URL}"
 
 # Get AWS Account ID
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null)
@@ -28,10 +24,6 @@ if [ -z "$AWS_ACCOUNT_ID" ]; then
     exit 1
 fi
 echo "Retrieved AWS Account ID: ${AWS_ACCOUNT_ID}"
-
-# Define the AWS OIDC Provider ARN based on the AWS Account ID and OIDC URL
-# The OIDC provider ARN format is arn:aws:iam::ACCOUNT_ID:oidc-provider/URL_HOSTNAME
-AWS_OIDC_PROVIDER_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:oidc-provider/${OIDC_PROVIDER_URL#https://}"
 
 # Derive a unique role name based on project ID and a timestamp or fixed suffix
 # Using a fixed name for simplicity as per original, but good to be aware.
@@ -57,8 +49,9 @@ else
       "Action": "sts:AssumeRoleWithWebIdentity",
       "Condition": {
         "StringEquals": {
-          "accounts.google.com:aud": "sts.amazonaws.com",
-          "accounts.google.com:email": "${GCP_SERVICE_ACCOUNT_EMAIL}"
+          "accounts.google.com:oaud": "sts.amazonaws.com",
+                    "accounts.google.com:aud": "${GCP_SA_SUB}",
+                    "accounts.google.com:sub": "${GCP_SA_SUB}"
         }
       }
     }
@@ -85,25 +78,7 @@ EOF
     echo "IAM Role '${AWS_ROLE_NAME}' created successfully."
 fi
 
-# 2. Create an AWS OIDC Provider
-echo "Checking if AWS OIDC Provider for '${OIDC_PROVIDER_URL}' already exists..."
-# Use get-open-id-connect-provider with the derived ARN to check existence
-if aws iam get-open-id-connect-provider --open-id-connect-provider-arn "${AWS_OIDC_PROVIDER_ARN}" &>/dev/null; then
-    echo "OIDC Provider for '${OIDC_PROVIDER_URL}' already exists. Skipping creation."
-else
-    echo "OIDC Provider for '${OIDC_PROVIDER_URL}' does not exist. Creating..."
-    # Create the OIDC provider with Google's OIDC URL, sts.amazonaws.com as client ID, and the root CA thumbprint
-    if ! aws iam create-open-id-connect-provider \
-        --url "${OIDC_PROVIDER_URL}" \
-        --client-id-list "${OIDC_CLIENT_ID}" \
-        --thumbprint-list "${GOOGLE_ROOT_CA_THUMBPRINT}" &>/dev/null; then
-        echo "Error: Failed to create OIDC Provider for '${OIDC_PROVIDER_URL}'."
-        exit 1
-    fi
-    echo "OIDC Provider for '${OIDC_PROVIDER_URL}' created successfully."
-fi
-
-echo "AWS IAM Role and OIDC Provider setup complete!"
+echo "AWS IAM Role setup complete!"
 echo "------------------------------------------------------------"
 
 # Add ECR Pull permissions to the role
@@ -133,16 +108,10 @@ if [ -z "$AWS_ROLE_ARN" ]; then
 fi
 
 echo "AWS Role ARN for ${AWS_ROLE_NAME}: ${AWS_ROLE_ARN}"
-echo "AWS OIDC Provider ARN: ${AWS_OIDC_PROVIDER_ARN}"
 
 # Create .status directory and write ARNs
 mkdir -p "${STATUS_DIR}"
-echo "Writing AWS role and OIDC provider ARNs to ${STATUS_FILE}..."
+echo "Writing AWS role ARN to ${STATUS_FILE}..."
 echo "AWS_ROLE_ARN=${AWS_ROLE_ARN}" > "${STATUS_FILE}"
-echo "AWS_OIDC_PROVIDER_ARN=${AWS_OIDC_PROVIDER_ARN}" >> "${STATUS_FILE}"
 echo "Information saved to ${STATUS_FILE}."
 
-echo "Next Steps:"
-echo "1. In your GCP environment (e.g., GKE Workload Identity or a compute instance),"
-echo "   configure your service account to use this AWS role ARN for federated authentication."
-echo ""

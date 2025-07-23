@@ -8,30 +8,26 @@ STATUS_FILE="${STATUS_DIR}/aws_role_info.txt"
 
 # Read ARNs from the status file
 if [ ! -f "${STATUS_FILE}" ]; then
-    echo "Error: Status file '${STATUS_FILE}' not found. Cannot determine AWS role and OIDC provider to clean up."
+    echo "Error: Status file '${STATUS_FILE}' not found. Cannot determine AWS role to clean up."
     echo "Please run 'setup_aws_role.sh' first or manually specify the resources."
     exit 1
 fi
 
-echo "Reading AWS role and OIDC provider ARNs from ${STATUS_FILE}..."
+echo "Reading AWS role ARN from ${STATUS_FILE}..."
 # Source the file to load variables, but ensure they are not empty
 source "${STATUS_FILE}"
 
-if [ -z "${AWS_ROLE_ARN}" ] || [ -z "${AWS_OIDC_PROVIDER_ARN}" ]; then
-    echo "Error: AWS_ROLE_ARN or AWS_OIDC_PROVIDER_ARN not found in ${STATUS_FILE}."
+if [ -z "${AWS_ROLE_ARN}" ]; then
+    echo "Error: AWS_ROLE_ARN not found in ${STATUS_FILE}."
     exit 1
 fi
 
 # Derive role name from ARN
 # Example ARN: arn:aws:iam::123456789012:role/gke-role-1
 AWS_ROLE_NAME=$(echo "${AWS_ROLE_ARN}" | awk -F'/' '{print $2}')
-# Derive OIDC provider URL from ARN for logging purposes
-# Example ARN: arn:aws:iam::123456789012:oidc-provider/accounts.google.com
-OIDC_PROVIDER_URL="https://$(echo "${AWS_OIDC_PROVIDER_ARN}" | awk -F'/' '{print $2}')"
 
-echo "Starting AWS IAM Role and OIDC Provider cleanup..."
+echo "Starting AWS IAM Role cleanup..."
 echo "AWS Role ARN to clean up: ${AWS_ROLE_ARN} (Name: ${AWS_ROLE_NAME})"
-echo "AWS OIDC Provider ARN to clean up: ${AWS_OIDC_PROVIDER_ARN} (URL: ${OIDC_PROVIDER_URL})"
 
 # Get AWS Account ID (for verification, though ARNs from file are primary)
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null)
@@ -74,22 +70,7 @@ else
     echo "IAM Role '${AWS_ROLE_NAME}' does not exist. Skipping role deletion."
 fi
 
-# 2. Clean up the AWS OIDC Provider
-echo "Attempting to clean up AWS OIDC Provider (ARN: ${AWS_OIDC_PROVIDER_ARN})..."
-# Check if the OIDC provider exists using its ARN
-if aws iam get-open-id-connect-provider --open-id-connect-provider-arn "${AWS_OIDC_PROVIDER_ARN}" &>/dev/null; then
-    echo "OIDC Provider found. Deleting provider..."
-    if aws iam delete-open-id-connect-provider --open-id-connect-provider-arn "${AWS_OIDC_PROVIDER_ARN}" &>/dev/null; then
-        echo "OIDC Provider for '${OIDC_PROVIDER_URL}' deleted successfully."
-    else
-        echo "Error: Failed to delete OIDC Provider for '${OIDC_PROVIDER_URL}'. It might be in use or linked to other resources."
-        exit 1
-    fi
-else
-    echo "OIDC Provider (ARN: ${AWS_OIDC_PROVIDER_ARN}) does not exist. Skipping OIDC provider deletion."
-fi
-
-echo "AWS IAM Role and OIDC Provider cleanup complete!"
+echo "AWS IAM Role cleanup complete!"
 echo "------------------------------------------------------------"
 
 # Optional: Remove the status file after successful cleanup

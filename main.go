@@ -208,7 +208,7 @@ func (e *ecrPlugin) getPrivateCredsData(ctx context.Context, imageHost string, i
 
 // getGCPIdentityToken fetches a GCP Service Account identity token from the GCP metadata server.
 func getGCPIdentityToken(ctx context.Context, audience string) (string, error) {
-	metadataURL := fmt.Sprintf("http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience=%s&format=full", url.QueryEscape(audience))
+	metadataURL := fmt.Sprintf("http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience=%s&format=full&licenses=FALSE", url.QueryEscape(audience))
 	klog.Infof("Attempting to fetch GCP identity token from metadata server for audience: %s", audience)
 	klog.V(4).Infof("GCP metadata server URL: %s", metadataURL)
 
