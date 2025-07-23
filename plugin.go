@@ -1,3 +1,7 @@
+/*
+Modified from https://github.com/kubernetes/cloud-provider-aws/tree/master/cmd/ecr-credential-provider
+*/
+
 package main
 
 import (
