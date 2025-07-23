@@ -53,14 +53,12 @@ else
   "Statement": [
     {
       "Effect": "Allow",
-      "Principal": {
-        "Federated": "${AWS_OIDC_PROVIDER_ARN}"
-      },
+      "Principal": {"Federated": "accounts.google.com"},
       "Action": "sts:AssumeRoleWithWebIdentity",
       "Condition": {
         "StringEquals": {
-          "${OIDC_PROVIDER_URL#https://}:aud": "${OIDC_CLIENT_ID}",
-          "${OIDC_PROVIDER_URL#https://}:sub": "${GCP_SERVICE_ACCOUNT_EMAIL}"
+          "accounts.google.com:aud": "sts.amazonaws.com",
+          "accounts.google.com:email": "${GCP_SERVICE_ACCOUNT_EMAIL}"
         }
       }
     }
@@ -80,7 +78,7 @@ EOF
     if ! aws iam create-role \
         --role-name "${AWS_ROLE_NAME}" \
         --assume-role-policy-document "${TRUST_POLICY_JSON}" \
-        --description "IAM Role for GCP Service Account (${GCP_SERVICE_ACCOUNT_EMAIL}) to assume via OIDC" &>/dev/null; then
+        --description "IAM Role for GCP Service Account (${GCP_SERVICE_ACCOUNT_EMAIL}) to assume via OIDC" ; then
         echo "Error: Failed to create IAM Role '${AWS_ROLE_NAME}'."
         exit 1
     fi
@@ -89,8 +87,8 @@ fi
 
 # 2. Create an AWS OIDC Provider
 echo "Checking if AWS OIDC Provider for '${OIDC_PROVIDER_URL}' already exists..."
-# List OIDC providers and check if one with our URL exists
-if aws iam list-open-id-connect-providers --query "OpenIDConnectProviderList[?Url=='${OIDC_PROVIDER_URL}'].Arn" --output text | grep -q "${OIDC_PROVIDER_URL}"; then
+# Use get-open-id-connect-provider with the derived ARN to check existence
+if aws iam get-open-id-connect-provider --open-id-connect-provider-arn "${AWS_OIDC_PROVIDER_ARN}" &>/dev/null; then
     echo "OIDC Provider for '${OIDC_PROVIDER_URL}' already exists. Skipping creation."
 else
     echo "OIDC Provider for '${OIDC_PROVIDER_URL}' does not exist. Creating..."

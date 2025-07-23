@@ -57,7 +57,7 @@ undeploy:
 .PHONY: clean
 clean:
 	@echo "Cleaning build directory and status files..."
-	@rm -rf $(BUILD_DIR) $(STATUS_DIR)
+	@rm -rf $(BUILD_DIR)
 	@echo "Cleaned."
 
 # Ensure .status directory exists before writing to it

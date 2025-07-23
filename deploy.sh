@@ -89,7 +89,7 @@ mkdir -p "${KUBELET_CONFIG_DIR}"
 
 echo "Inserting kubelet credential provider config file: ${KUBELET_CONFIG_FILE}"
 cp "${KUBELET_CONFIG_FILE}" "${KUBELET_CONFIG_FILE}".bak
-cat <<EOF_CONFIG > "${KUBELET_CONFIG_FILE}".tmp
+cat <<EOF_CONFIG > "${KUBELET_CONFIG_FILE}"
 kind: CredentialProviderConfig
 apiVersion: kubelet.config.k8s.io/v1
 providers:
