@@ -228,7 +228,7 @@ func getGCPIdentityToken(ctx context.Context, audience string) (string, error) {
 		return "", fmt.Errorf("failed to read response body from GCP metadata server: %w", err)
 	}
 
-	klog.Infof("Successfully fetched GCP identity token: %s", tokenBytes)
+	//klog.Infof("Successfully fetched GCP identity token: %s", tokenBytes)
 	return string(tokenBytes), nil
 }
 
